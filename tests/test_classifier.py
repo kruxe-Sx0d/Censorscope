@@ -76,8 +76,9 @@ def test_451_service_restriction():
         [dns_result(), tcp_result(), tls_result(), http_result("warning", codes=(451, 451))]
     )
     assert verdict == "possible_service_restriction"
-    assert confidence == "high"
+    assert confidence == "medium"
     assert any("451" in r for r in reasons)
+    assert any("intermediary" in r for r in reasons)
 
 
 def test_403_regional_restriction():
@@ -90,7 +91,7 @@ def test_403_regional_restriction():
         ]
     )
     assert verdict == "possible_service_restriction"
-    assert confidence == "high"
+    assert confidence == "medium"
 
 
 def test_regional_phrase_with_broken_tls_is_medium():
@@ -106,8 +107,8 @@ def test_regional_phrase_with_broken_tls_is_medium():
     assert confidence == "medium"
 
 
-def test_regional_phrase_on_200():
-    verdict, _, _ = classify(
+def test_regional_phrase_on_200_is_inconclusive():
+    verdict, confidence, reasons = classify(
         [
             dns_result(),
             tcp_result(),
@@ -115,7 +116,23 @@ def test_regional_phrase_on_200():
             http_result("warning", phrases=("not available in your region",)),
         ]
     )
-    assert verdict == "possible_service_restriction"
+    assert verdict == "inconclusive"
+    assert confidence == "low"
+    assert any("corroborating" in r for r in reasons)
+
+
+def test_non_regional_phrase_alone_is_inconclusive():
+    verdict, confidence, reasons = classify(
+        [
+            dns_result(),
+            tcp_result(),
+            tls_result(),
+            http_result("warning", phrases=("access denied",)),
+        ]
+    )
+    assert verdict == "inconclusive"
+    assert confidence == "low"
+    assert any("corroborating" in r for r in reasons)
 
 
 def test_dns_poisoning_pattern_high_confidence():

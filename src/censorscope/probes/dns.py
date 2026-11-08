@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 import time
 
 import dns.exception
@@ -30,16 +31,33 @@ def non_public_reasons(address: str) -> list[str]:
     return reasons
 
 
-def _resolve_system(target: str) -> dict:
+def resolve_system(target: str, timeout: float) -> dict:
+    """Resolve via the OS resolver (getaddrinfo), bounded by `timeout`.
+
+    getaddrinfo has no timeout parameter and cannot be cancelled, so it runs
+    in a daemon thread. On timeout the thread is abandoned; it exits with the
+    process. This keeps exact system semantics (hosts file, nsswitch) while
+    bounding the wait.
+    """
     start = time.monotonic()
     entry: dict = {"addresses": [], "duration_ms": 0.0, "error": None}
-    try:
-        infos = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
-        entry["addresses"] = sorted({info[4][0] for info in infos})
-    except socket.gaierror as exc:
-        entry["error"] = f"system resolver: {exc}"
-    except OSError as exc:
-        entry["error"] = f"system resolver: {exc}"
+    outcome: dict = {}
+
+    def worker() -> None:
+        try:
+            infos = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
+            outcome["addresses"] = sorted({info[4][0] for info in infos})
+        except OSError as exc:
+            outcome["error"] = f"system resolver: {exc}"
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        entry["error"] = f"system resolver: timed out after {timeout:g}s"
+    else:
+        entry["addresses"] = outcome.get("addresses", [])
+        entry["error"] = outcome.get("error")
     entry["duration_ms"] = round((time.monotonic() - start) * 1000, 1)
     return entry
 
@@ -70,7 +88,7 @@ def _resolve_public(target: str, server: str, timeout: float) -> dict:
 def run(target: str, timeout: float = 5.0) -> ProbeResult:
     """Resolve the domain via the system resolver and two public resolvers."""
     start = time.monotonic()
-    system = _resolve_system(target)
+    system = resolve_system(target, timeout)
     resolvers = {"system": system}
     for name, server in PUBLIC_RESOLVERS.items():
         resolvers[name] = _resolve_public(target, server, timeout)

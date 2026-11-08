@@ -15,7 +15,7 @@ suggests, and where the uncertainty lies.
   (`1.1.1.1`), detects NXDOMAIN, flags private/loopback/link-local/reserved answers,
   and records per-query timing.
 - **TCP probe** — tests connectivity to ports 80 and 443 (success, refusal, timeout,
-  unreachable).
+  unreachable), trying every resolved IPv4 address until one connects.
 - **TLS probe** — performs a verified handshake with the real SNI and a comparison
   handshake without SNI; certificate verification stays enabled.
 - **HTTP probe** — checks status codes (including 403/404/451/5xx), redirect targets,
@@ -187,6 +187,11 @@ and does not depend on the public internet.
   lookups on broken networks and lets the tool test the real service even when
   the system resolver is being manipulated. TLS SNI and certificate verification,
   and the HTTP Host header, always use the real domain.
+- The system resolver (`getaddrinfo`) has no timeout parameter and cannot be
+  cancelled, so it runs in a daemon thread with a bounded wait. On timeout the
+  lookup is reported as failed and the abandoned thread exits with the process.
+  This preserves exact system semantics (hosts file, nsswitch) while honoring
+  `--timeout`.
 - HTTP redirects are recorded but not followed, keeping the probe bounded.
 - HTTP proxy environment variables are ignored (`trust_env=False`) so results
   reflect the direct network path.
@@ -197,10 +202,16 @@ and does not depend on the public internet.
   phrases are signals, not certainty. CDNs, geo-DNS, split-horizon DNS, and service
   outages can produce similar patterns. Every verdict includes its reasoning and
   limitations.
-- **System resolver timing.** `socket.getaddrinfo()` has no timeout parameter; on
-  networks that silently drop DNS queries, the DNS probe can take as long as the
-  OS resolver's own retry cycle (often ~20–40 s) regardless of `--timeout`. All
-  other operations honor the timeout.
+- **HTTP restriction signals are capped at medium confidence.** A 451 response or
+  a 403 with regional language suggests a service-side restriction, but a CDN,
+  proxy, or other network intermediary could generate the same response; the
+  origin cannot be verified from the client.
+- **Phrase detection is a weak heuristic.** The HTTP probe looks for a small set
+  of fixed English phrases in at most the first 64 KiB of each response body. It
+  misses block pages in other languages and pages rendered by JavaScript, and
+  normal pages can contain such phrases. Phrase hits alone therefore never
+  produce a restriction verdict — they are reported as inconclusive unless
+  corroborated by a status code such as 403 or 451.
 - **IPv4 focus.** Probes compare A records and connect over IPv4; IPv6-only domains
   are not fully diagnosed in this version.
 - **No SNI-less certificate hostname matching.** The comparison handshake keeps
@@ -208,9 +219,9 @@ and does not depend on the public internet.
   certificate without SNI).
 - **Linux only** for now; the code is kept portable so Windows support can be added
   later.
-- Only the first resolved address is used for TCP/TLS/HTTP connection attempts.
-- The HTTP probe inspects at most the first 64 KiB of each response body and does
-  not execute JavaScript or render pages.
+- The TCP probe tries every resolved address per port, but TLS and HTTP connection
+  attempts use only the first address.
+- The HTTP probe does not execute JavaScript or render pages.
 
 ## License
 

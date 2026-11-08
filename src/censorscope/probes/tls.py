@@ -7,6 +7,7 @@ import ssl
 import time
 
 from censorscope.models import STATUS_ERROR, STATUS_SUCCESS, STATUS_WARNING, ProbeResult
+from censorscope.probes.dns import resolve_system
 
 
 def _handshake(target: str, port: int, timeout: float, sni: str | None) -> dict:
@@ -57,11 +58,7 @@ def run(
     """
     start = time.monotonic()
     if addresses is None:
-        try:
-            infos = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
-            addresses = sorted({info[4][0] for info in infos})
-        except OSError:
-            addresses = []
+        addresses = resolve_system(target, timeout)["addresses"]
     if not addresses:
         return ProbeResult(
             name="tls",

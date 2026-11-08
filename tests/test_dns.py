@@ -1,6 +1,8 @@
 """Tests for the DNS probe (fully mocked, no network)."""
 
 import socket
+import threading
+import time
 from types import SimpleNamespace
 
 import dns.exception
@@ -129,3 +131,30 @@ def test_public_address_has_no_reasons():
 
 def test_invalid_address():
     assert dns_probe.non_public_reasons("not-an-ip") == ["invalid"]
+
+
+def test_system_resolver_timeout_is_bounded(monkeypatch):
+    release = threading.Event()
+
+    def slow_getaddrinfo(*args, **kwargs):
+        release.wait(5)
+        return _system_answer("93.184.216.34")
+
+    monkeypatch.setattr(dns_probe.socket, "getaddrinfo", slow_getaddrinfo)
+    start = time.monotonic()
+    entry = dns_probe.resolve_system("example.com", timeout=0.2)
+    elapsed = time.monotonic() - start
+    release.set()
+    assert entry["addresses"] == []
+    assert "timed out" in entry["error"]
+    assert elapsed < 2.0
+    assert entry["duration_ms"] < 2000
+
+
+def test_system_resolver_success_within_timeout(monkeypatch):
+    monkeypatch.setattr(
+        dns_probe.socket, "getaddrinfo", lambda *a, **k: _system_answer("93.184.216.34")
+    )
+    entry = dns_probe.resolve_system("example.com", timeout=1.0)
+    assert entry["addresses"] == ["93.184.216.34"]
+    assert entry["error"] is None

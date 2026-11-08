@@ -59,23 +59,24 @@ def classify(results: list[ProbeResult]) -> tuple[str, str, list[str]]:
 
     # --- Rule 1: explicit service-side restriction signals -------------------
     if 451 in codes:
-        reasons = ["HTTP 451 (Unavailable For Legal Reasons) returned by the service."]
+        reasons = ["HTTP 451 (Unavailable For Legal Reasons) was observed in the response."]
         if regional:
             reasons.append(
                 f"Response body contains regional restriction language: {regional[0]!r}."
             )
-        reasons.append("The service itself is refusing access; this is not a network-level block.")
-        return VERDICT_RESTRICTION, CONFIDENCE_HIGH, reasons
+        reasons.append(
+            "The response claims a legal restriction, but it could come from the service, "
+            "a CDN, or a network intermediary; the origin cannot be verified from here."
+        )
+        return VERDICT_RESTRICTION, CONFIDENCE_MEDIUM, reasons
 
-    if regional and (403 in codes or any(200 <= c < 300 for c in codes)):
+    if regional and 403 in codes:
         reasons = [
             f"Response body contains regional restriction language: {regional[0]!r}.",
             f"HTTP status code(s) observed: {', '.join(map(str, sorted(set(codes))))}.",
+            "A 403 with regional language suggests a service-side restriction, but a CDN "
+            "or other intermediary could produce the same response.",
         ]
-        if dns_ok and tcp_ok and sni_ok:
-            reasons.append("DNS, TCP, and TLS all work, so the refusal comes from the service.")
-            return VERDICT_RESTRICTION, CONFIDENCE_HIGH, reasons
-        reasons.append("The service is reachable and explicitly refuses this region.")
         return VERDICT_RESTRICTION, CONFIDENCE_MEDIUM, reasons
 
     # --- Rule 2: possible network interference -------------------------------
@@ -147,6 +148,12 @@ def classify(results: list[ProbeResult]) -> tuple[str, str, list[str]]:
         reasons = ["No probe results were collected."]
     if nxdomain:
         reasons.append("NXDOMAIN observed: the domain may not exist, or DNS may be manipulated.")
+    if phrases:
+        reasons.append(
+            "Blocking-related phrases were found in the response body, but without "
+            "corroborating evidence (such as HTTP 403/451); normal pages can contain "
+            "such phrases too."
+        )
     if http_unreachable and tcp_ok:
         reasons.append("TCP connects but HTTP fails, which is contradictory.")
     reasons.append("Evidence is incomplete or contradictory; no reliable conclusion can be drawn.")

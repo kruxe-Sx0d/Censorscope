@@ -7,40 +7,52 @@ import socket
 import time
 
 from censorscope.models import STATUS_ERROR, STATUS_SUCCESS, STATUS_WARNING, ProbeResult
+from censorscope.probes.dns import resolve_system
 
 DEFAULT_PORTS = (80, 443)
 
 
-def _test_port(target: str, port: int, timeout: float) -> dict:
+def _test_port(addresses: list[str], port: int, timeout: float) -> dict:
+    """Try every address until one connects; record each attempt."""
     start = time.monotonic()
-    entry: dict = {"outcome": None, "duration_ms": 0.0, "error": None}
-    try:
-        with socket.create_connection((target, port), timeout=timeout):
+    entry: dict = {
+        "outcome": None,
+        "address": None,
+        "attempts": [],
+        "duration_ms": 0.0,
+        "error": None,
+    }
+    for address in addresses:
+        attempt: dict = {"address": address, "outcome": None, "duration_ms": 0.0, "error": None}
+        attempt_start = time.monotonic()
+        try:
+            with socket.create_connection((address, port), timeout=timeout):
+                attempt["outcome"] = "connected"
+        except socket.gaierror as exc:
+            attempt["outcome"] = "dns_error"
+            attempt["error"] = str(exc)
+        except ConnectionRefusedError:
+            attempt["outcome"] = "refused"
+            attempt["error"] = "connection refused"
+        except TimeoutError:
+            attempt["outcome"] = "timeout"
+            attempt["error"] = "connection timed out"
+        except OSError as exc:
+            attempt["outcome"] = (
+                "unreachable" if exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH) else "error"
+            )
+            attempt["error"] = str(exc)
+        attempt["duration_ms"] = round((time.monotonic() - attempt_start) * 1000, 1)
+        entry["attempts"].append(attempt)
+        if attempt["outcome"] == "connected":
             entry["outcome"] = "connected"
-    except socket.gaierror as exc:
-        entry["outcome"] = "dns_error"
-        entry["error"] = str(exc)
-    except ConnectionRefusedError:
-        entry["outcome"] = "refused"
-        entry["error"] = "connection refused"
-    except TimeoutError:
-        entry["outcome"] = "timeout"
-        entry["error"] = "connection timed out"
-    except OSError as exc:
-        entry["outcome"] = (
-            "unreachable" if exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH) else "error"
-        )
-        entry["error"] = str(exc)
+            entry["address"] = address
+            break
+    else:
+        entry["outcome"] = entry["attempts"][-1]["outcome"]
+        entry["error"] = entry["attempts"][-1]["error"]
     entry["duration_ms"] = round((time.monotonic() - start) * 1000, 1)
     return entry
-
-
-def _resolve(target: str) -> list[str]:
-    try:
-        infos = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
-        return sorted({info[4][0] for info in infos})
-    except OSError:
-        return []
 
 
 def run(
@@ -51,12 +63,14 @@ def run(
 ) -> ProbeResult:
     """Attempt TCP connections to each port and record the outcomes.
 
-    `addresses` lets the orchestrator reuse DNS probe answers; None means
-    resolve here, and an empty list means DNS found nothing to connect to.
+    Every resolved IPv4 address is tried per port (each attempt gets its own
+    timeout); the port counts as connected if any address accepts. `addresses`
+    lets the orchestrator reuse DNS probe answers; None means resolve here,
+    and an empty list means DNS found nothing to connect to.
     """
     start = time.monotonic()
     if addresses is None:
-        addresses = _resolve(target)
+        addresses = resolve_system(target, timeout)["addresses"]
     if not addresses:
         return ProbeResult(
             name="tcp",
@@ -67,7 +81,7 @@ def run(
             error="no addresses",
         )
 
-    results = {str(port): _test_port(addresses[0], port, timeout) for port in ports}
+    results = {str(port): _test_port(addresses, port, timeout) for port in ports}
     connected = [port for port, entry in results.items() if entry["outcome"] == "connected"]
 
     if len(connected) == len(results):

@@ -122,3 +122,53 @@ def test_connects_to_provided_address(monkeypatch):
     monkeypatch.setattr(tcp_probe.socket, "create_connection", fake_create_connection)
     tcp_probe.run("example.com", addresses=ADDRS)
     assert connected == [(ADDRS[0], 80), (ADDRS[0], 443)]
+
+
+MULTI = ["93.184.216.34", "93.184.216.35"]
+
+
+def test_falls_back_to_second_address(monkeypatch):
+    attempts = []
+
+    def fake_create_connection(address, timeout=None):
+        attempts.append(address)
+        if address[0] == MULTI[0]:
+            raise TimeoutError()
+        return MagicMock()
+
+    monkeypatch.setattr(tcp_probe.socket, "create_connection", fake_create_connection)
+    result = tcp_probe.run("example.com", timeout=0.1, addresses=MULTI)
+    assert result.status == "success"
+    port = result.details["ports"]["443"]
+    assert port["outcome"] == "connected"
+    assert port["address"] == MULTI[1]
+    assert [a["address"] for a in port["attempts"]] == MULTI
+    assert port["attempts"][0]["outcome"] == "timeout"
+    assert attempts == [(MULTI[0], 80), (MULTI[1], 80), (MULTI[0], 443), (MULTI[1], 443)]
+
+
+def test_stops_at_first_connected_address(monkeypatch):
+    attempts = []
+
+    def fake_create_connection(address, timeout=None):
+        attempts.append(address)
+        return MagicMock()
+
+    monkeypatch.setattr(tcp_probe.socket, "create_connection", fake_create_connection)
+    result = tcp_probe.run("example.com", addresses=MULTI)
+    assert result.status == "success"
+    assert attempts == [(MULTI[0], 80), (MULTI[0], 443)]
+    assert len(result.details["ports"]["80"]["attempts"]) == 1
+
+
+def test_all_addresses_fail(monkeypatch):
+    def fake_create_connection(address, timeout=None):
+        raise ConnectionRefusedError()
+
+    monkeypatch.setattr(tcp_probe.socket, "create_connection", fake_create_connection)
+    result = tcp_probe.run("example.com", addresses=MULTI)
+    assert result.status == "error"
+    port = result.details["ports"]["80"]
+    assert port["outcome"] == "refused"
+    assert len(port["attempts"]) == len(MULTI)
+    assert all(a["outcome"] == "refused" for a in port["attempts"])
