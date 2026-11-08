@@ -1,6 +1,8 @@
 """Tests for the CLI (diagnostics mocked, no network)."""
 
 import json
+import subprocess
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -126,3 +128,15 @@ def test_piped_output_has_no_ansi(mock_diagnostic):
 def test_timeout_out_of_range():
     result = runner.invoke(cli.app, ["check", "example.com", "--timeout", "0.1"])
     assert result.exit_code == 2
+
+
+def test_module_entry_point():
+    """`python -m censorscope` works without the console script on PATH."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "censorscope", "--version"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0
+    assert __version__ in proc.stdout

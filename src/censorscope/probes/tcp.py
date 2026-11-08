@@ -11,6 +11,16 @@ from censorscope.probes.dns import resolve_system
 
 DEFAULT_PORTS = (80, 443)
 
+# Windows socket errors carry WSA codes in .winerror instead of POSIX errno:
+# WSAENETUNREACH (10051) and WSAEHOSTUNREACH (10065).
+_UNREACHABLE_WINERRORS = (10051, 10065)
+
+
+def _is_unreachable(exc: OSError) -> bool:
+    return exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH) or (
+        getattr(exc, "winerror", None) in _UNREACHABLE_WINERRORS
+    )
+
 
 def _test_port(addresses: list[str], port: int, timeout: float) -> dict:
     """Try every address until one connects; record each attempt."""
@@ -38,9 +48,7 @@ def _test_port(addresses: list[str], port: int, timeout: float) -> dict:
             attempt["outcome"] = "timeout"
             attempt["error"] = "connection timed out"
         except OSError as exc:
-            attempt["outcome"] = (
-                "unreachable" if exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH) else "error"
-            )
+            attempt["outcome"] = "unreachable" if _is_unreachable(exc) else "error"
             attempt["error"] = str(exc)
         attempt["duration_ms"] = round((time.monotonic() - attempt_start) * 1000, 1)
         entry["attempts"].append(attempt)

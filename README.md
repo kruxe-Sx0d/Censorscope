@@ -1,9 +1,9 @@
 # Censorscope
 
-Censorscope is a lightweight Linux command-line tool that investigates **why a domain
-may be inaccessible from your network**. It runs four independent probes (DNS, TCP,
-TLS, HTTP), collects evidence, and produces a cautious, readable assessment of the
-possible cause.
+Censorscope is a lightweight command-line tool for **Linux and Windows** that
+investigates **why a domain may be inaccessible from your network**. It runs four
+independent probes (DNS, TCP, TLS, HTTP), collects evidence, and produces a
+cautious, readable assessment of the possible cause.
 
 Results are **heuristic**. Censorscope never claims to identify the exact source of
 a restriction with certainty — it explains what it observed, what that evidence
@@ -28,8 +28,9 @@ suggests, and where the uncertainty lies.
 
 ## Requirements
 
-- Linux
+- Linux, or Windows 10/11
 - Python 3.11 or newer
+- No administrator/root privileges needed
 
 ## Installation
 
@@ -51,6 +52,25 @@ For development:
 pip install -e ".[dev]"
 ```
 
+### Windows notes
+
+- Install Python 3.11+ from [python.org](https://www.python.org/downloads/) (enable
+  "Add python.exe to PATH") or from the Microsoft Store, then run the same
+  `pip install .` command in PowerShell or Windows Terminal.
+- If the `censorscope` command is not found after installation (the Python
+  `Scripts` directory is not on `PATH`), use the module form instead:
+
+  ```powershell
+  python -m censorscope check example.com
+  ```
+
+- Windows Terminal or PowerShell 7 gives the best colored output. The legacy
+  console host is supported with reduced color fidelity; `NO_COLOR` works
+  everywhere.
+- Windows support is exercised by CI (the full mocked test suite runs on
+  `windows-latest` for Python 3.11–3.13). Real-network behavior on Windows is
+  still being validated — please report anything unexpected.
+
 ## Usage
 
 ```bash
@@ -66,6 +86,9 @@ censorscope check example.com --timeout 10
 # Help and version
 censorscope --help
 censorscope --version
+
+# Module form (works even if the Scripts directory is not on PATH)
+python -m censorscope check example.com
 ```
 
 ### Exit codes
@@ -82,7 +105,7 @@ is set.
 ## Example output
 
 ```text
-╭───────────────────────────── Censorscope 0.1.0 ──────────────────────────────╮
+╭───────────────────────────── Censorscope 0.2.0 ──────────────────────────────╮
 │ Target: pypi.org                                                             │
 ╰────────────────────── network reachability diagnostic ───────────────────────╯
 Probe   Status  Summary                                                     Time
@@ -155,6 +178,7 @@ censorscope/
 ├── .github/workflows/ci.yml
 ├── src/censorscope/
 │   ├── __init__.py
+│   ├── __main__.py      # python -m censorscope entry point
 │   ├── cli.py           # Typer commands, exit codes
 │   ├── models.py        # ProbeResult / DiagnosticReport dataclasses
 │   ├── validation.py    # domain input validation
@@ -217,8 +241,10 @@ and does not depend on the public internet.
 - **No SNI-less certificate hostname matching.** The comparison handshake keeps
   chain verification but relaxes hostname matching (many servers present a default
   certificate without SNI).
-- **Linux only** for now; the code is kept portable so Windows support can be added
-  later.
+- **Windows support is new.** The code is platform-neutral and the mocked test
+  suite runs on Windows in CI, but real-network Windows behavior has had less
+  field testing than Linux. TCP error classification handles Windows WSA codes
+  (`WSAENETUNREACH`/`WSAEHOSTUNREACH`); TLS uses the Windows certificate store.
 - The TCP probe tries every resolved address per port, but TLS and HTTP connection
   attempts use only the first address.
 - The HTTP probe does not execute JavaScript or render pages.

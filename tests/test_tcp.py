@@ -172,3 +172,26 @@ def test_all_addresses_fail(monkeypatch):
     assert port["outcome"] == "refused"
     assert len(port["attempts"]) == len(MULTI)
     assert all(a["outcome"] == "refused" for a in port["attempts"])
+
+
+@pytest.mark.parametrize("winerror", [10051, 10065])
+def test_windows_unreachable_winerror(mock_tcp, winerror):
+    """WSAENETUNREACH/WSAEHOSTUNREACH arrive as .winerror, not POSIX errno."""
+    exc = OSError("network is unreachable")
+    exc.winerror = winerror
+    mock_tcp[80] = exc
+    mock_tcp[443] = exc
+    result = tcp_probe.run("example.com", addresses=ADDRS)
+    assert result.status == "error"
+    assert result.details["ports"]["80"]["outcome"] == "unreachable"
+    assert result.details["ports"]["443"]["outcome"] == "unreachable"
+
+
+def test_other_winerror_is_generic_error(mock_tcp):
+    exc = OSError("access denied")
+    exc.winerror = 10013  # WSAEACCES, e.g. a firewall rule
+    mock_tcp[80] = exc
+    mock_tcp[443] = exc
+    result = tcp_probe.run("example.com", addresses=ADDRS)
+    assert result.status == "error"
+    assert result.details["ports"]["80"]["outcome"] == "error"
